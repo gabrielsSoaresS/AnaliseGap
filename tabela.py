@@ -1,11 +1,12 @@
 import pandas as pd
 import statistics
+import numpy as np
 import matplotlib.pyplot as plt
-import seaborn
+import seaborn as sns
 
 # === 1) Ler o arquivo original ===
 # Troque o caminho caso seu arquivo esteja em outra pasta
-arquivo = "WIN$N_M1.csv"
+arquivo = r"C:\Users\soare\OneDrive\Documentos\Data Science\AnaliseGap\WIN$N_M1.csv"
 
 # O arquivo vem separado por tabulação (\t)
 tabela = pd.read_csv(arquivo, sep="\t")
@@ -53,6 +54,43 @@ print(gaps[['DATETIME', 'Prev_Close', 'OPEN', 'Gap', 'Gap%', 'Gap_Direçao']])
 tabela_detalhes = tabela.describe()
 print(tabela_detalhes)
 
-#Gera o boxplot
-seaborn.boxplot(tabela)
-plt.show()
+# --- identificar fechamento dos gaps ---
+gaps["Fechou_Gap"] = False
+gaps["Tempo_Fecho"] = np.nan
+
+for i, row in gaps.iterrows():
+    ref_price = row["Prev_Close"]
+    start_time = row["DATETIME"]
+
+    # pegar candles seguintes até o gap fechar
+    futuros = tabela.loc[tabela["DATETIME"] > start_time]
+
+    if row["Gap"] > 0:  # gap de alta
+        fechado = futuros[futuros["LOW"] <= ref_price]
+    else:  # gap de baixa
+        fechado = futuros[futuros["HIGH"] >= ref_price]
+
+    if not fechado.empty:
+        gaps.at[i, "Fechou_Gap"] = True
+        fechamento = fechado.iloc[0]["DATETIME"]
+        gaps.at[i, "Tempo_Fecho"] = (fechamento - start_time).total_seconds() / 60.0
+
+# --- amplitude absoluta ---
+gaps["Amplitude"] = gaps["Gap"].abs()
+
+# --- faixas de amplitude ---
+bins = [-np.inf, 5, 10, 20, 50, 100, np.inf]
+labels = ["<=5", "6-10", "11-20", "21-50", "51-100", "100+"]
+
+gaps["Faixa"] = pd.cut(gaps["Amplitude"], bins=bins, labels=labels)
+
+# --- resumo por faixa ---
+resumo = gaps.groupby("Faixa").agg(
+    total_gaps=("Gap", "count"),
+    pct_total=("Gap", lambda x: 100*len(x)/len(gaps)),
+    prob_fecho=("Fechou_Gap", "mean"),
+    mediana_amplitude=("Amplitude", "median"),
+    mediana_tempo_fecho=("Tempo_Fecho", "median")
+).reset_index()
+
+print(resumo)
